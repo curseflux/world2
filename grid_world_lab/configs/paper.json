@@ -1,0 +1,14 @@
+{
+  "data": {
+    "rows": 10,
+    "cols": 10,
+    "train_samples": 20000,
+    "max_length": 32,
+    "validation_samples": 1000,
+    "probe_train_samples": 2000,
+    "probe_validation_samples": 500,
+    "test_samples_per_cohort": 500
+  },
+  "model": {"layers": 12, "dim": 768, "heads": 12, "dropout": 0.1},
+  "output": {"directory": "runs/paper"}
+}

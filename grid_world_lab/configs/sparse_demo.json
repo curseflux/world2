@@ -1,0 +1,18 @@
+{
+  "data": {
+    "rows": 10,
+    "cols": 10,
+    "train_samples": 80,
+    "max_length": 8,
+    "validation_samples": 100,
+    "probe_train_samples": 500,
+    "probe_validation_samples": 150,
+    "test_samples_per_cohort": 50,
+    "max_attempts": 50000
+  },
+  "model": {"layers": 4, "dim": 128, "heads": 4, "dropout": 0.1},
+  "train": {"epochs": 40, "batch_size": 32, "log_every_steps": 30},
+  "probe": {"epochs": 30, "batch_size": 512},
+  "generation": {"max_new_tokens": 24, "batch_size": 32},
+  "output": {"directory": "runs/sparse-demo"}
+}

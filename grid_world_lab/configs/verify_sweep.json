@@ -1,0 +1,5 @@
+{
+  "base_config": "tiny.json",
+  "parameters": {"train.precision": ["fp32"], "generation.syntax_only": [true]},
+  "seeds": [42, 43]
+}

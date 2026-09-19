@@ -1,0 +1,3 @@
+# Choose a CUDA wheel using https://pytorch.org/get-started/locally/ before installing.
+torch>=2.4
+numpy>=1.24

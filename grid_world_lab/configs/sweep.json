@@ -1,0 +1,13 @@
+{
+  "base_config": "smoke.json",
+  "parameters": {
+    "data.rows": [4, 6],
+    "data.cols": [4, 6],
+    "data.train_samples": [50, 200],
+    "data.max_length": [6, 12],
+    "model.layers": [2],
+    "model.dim": [64],
+    "model.heads": [4]
+  },
+  "seeds": [42, 43]
+}

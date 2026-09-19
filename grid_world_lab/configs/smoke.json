@@ -1,0 +1,18 @@
+{
+  "data": {
+    "rows": 4,
+    "cols": 4,
+    "train_samples": 200,
+    "max_length": 12,
+    "validation_samples": 40,
+    "probe_train_samples": 100,
+    "probe_validation_samples": 40,
+    "test_samples_per_cohort": 16,
+    "max_attempts": 20000
+  },
+  "model": {"layers": 2, "dim": 64, "heads": 4, "dropout": 0.0},
+  "train": {"epochs": 3, "batch_size": 32, "log_every_steps": 5},
+  "probe": {"epochs": 10, "batch_size": 256, "extraction_batch_size": 32},
+  "generation": {"max_new_tokens": 16, "batch_size": 16},
+  "output": {"directory": "runs/smoke"}
+}
