@@ -114,6 +114,10 @@ def main(argv=None):
     extract.add_argument('--sample-ids', nargs='+', help='Limit generated contexts to these saved sample IDs; implies --include-generated.')
     extract.add_argument('--device', default='auto')
     extract.add_argument('--precision', choices=['auto', 'fp32', 'bf16', 'fp16'], default='auto')
+    extract.add_argument('--layout-kind', choices=['reference', 'generated_valid', 'generated_invalid'], default='reference')
+    extract.add_argument('--layout-min-agreement', type=float, default=0.6)
+    extract.add_argument('--layout-min-contexts', type=int, default=3)
+    extract.add_argument('--layout-all-preprobes', action='store_true', help='Include contexts whose pre-action probe disagrees with a known source.')
     sweep_parser = commands.add_parser('sweep', help='Run a Cartesian parameter/seed sweep sequentially.')
     sweep_parser.add_argument('--spec', required=True, type=Path)
     sweep_parser.add_argument('--output', required=True, type=Path)
@@ -131,7 +135,9 @@ def main(argv=None):
         elif args.command == 'extract':
             from .extract import extract_run
             extract_run(args.run, args.output, args.contexts_per_node, args.batch_size,
-                        args.seed, args.splits, args.include_generated, args.device, args.precision, args.sample_ids)
+                        args.seed, args.splits, args.include_generated, args.device, args.precision, args.sample_ids,
+                        args.layout_kind, args.layout_min_agreement, args.layout_min_contexts,
+                        args.layout_all_preprobes)
         else:
             if args.limit is not None and args.limit < 1:
                 raise ValueError('--limit must be positive.')

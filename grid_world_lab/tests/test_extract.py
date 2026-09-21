@@ -5,7 +5,7 @@ import re
 import unittest
 from unittest.mock import patch
 
-from gridworld.extract import collect_contexts, summarize_transitions
+from gridworld.extract import collect_contexts, infer_geometry, summarize_transitions
 from gridworld.extract_report import render_extraction
 
 
@@ -63,6 +63,33 @@ class ExtractionTests(unittest.TestCase):
         self.assertIsNone(forward['correct_target_rate'])  # No truth label for illegal moves.
         matched = summarize_transitions(contexts, events, [1, 2, 3], True)
         self.assertEqual(next(r for r in matched if r['source'] == 1)['contexts'], 1)
+
+    def test_geometry_uses_direction_constraints_instead_of_node_numbering(self):
+        def row(source, direction, target, reciprocal=True):
+            return {'kind': 'reference', 'source': source, 'direction': direction,
+                    'target': target, 'contexts': 10, 'agreement': .9,
+                    'mean_probe_confidence': .95, 'independent_reciprocal': reciprocal,
+                    'true_neighbor': None}
+        geometry = infer_geometry([
+            row(2, 'S', 13), row(13, 'N', 2),
+            row(13, 'E', 14), row(14, 'W', 13),
+        ], [2, 13, 14, 99])
+        raw = {p['node']: (p['raw_x'], p['raw_y']) for p in geometry['positions']}
+        self.assertAlmostEqual(raw[13][0], raw[2][0], places=6)
+        self.assertAlmostEqual(raw[13][1] - raw[2][1], 1, places=6)
+        self.assertAlmostEqual(raw[14][0] - raw[13][0], 1, places=6)
+        self.assertAlmostEqual(geometry['weighted_rmse'], 0, places=6)
+        self.assertEqual(geometry['component_count'], 2)  # Unconstrained 99 is still displayed.
+
+    def test_geometry_exposes_inconsistent_direction_constraints(self):
+        rows = [
+            {'kind': 'reference', 'source': 2, 'direction': direction, 'target': 13,
+             'contexts': 10, 'agreement': .9, 'mean_probe_confidence': .9,
+             'independent_reciprocal': False, 'true_neighbor': None}
+            for direction in ('S', 'E')]
+        geometry = infer_geometry(rows, [2, 13])
+        self.assertGreater(geometry['weighted_rmse'], .5)
+        self.assertTrue(all(edge['residual'] > .5 for edge in geometry['constraints']))
 
     def test_viewer_data_cannot_escape_script(self):
         payload = {'note': '</script><script>bad()</script>'}

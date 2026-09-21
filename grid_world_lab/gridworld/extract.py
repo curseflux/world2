@@ -8,7 +8,7 @@ import hashlib
 from pathlib import Path
 import random
 
-from .data import DIRECTIONS, build_neighbor_table
+from .data import DELTAS, DIRECTIONS, build_neighbor_table
 from .pipeline import export_csv, json_read, json_write
 
 OPPOSITE = dict(zip(DIRECTIONS, ('S', 'SW', 'W', 'NW', 'N', 'NE', 'E', 'SE')))
@@ -108,6 +108,113 @@ def summarize_transitions(contexts, events, nodes, require_correct_source=False)
     return rows
 
 
+def infer_geometry(rows, nodes, kind='reference', min_agreement=0.6, min_contexts=3):
+    """Fit node coordinates to modal direction constraints without true positions.
+
+    Each retained transition requests p(target)-p(source)=direction_delta. A
+    weighted least-squares fit exposes contradictions as nonzero residuals.
+    Disconnected components are solved independently and packed only for display.
+    """
+    import numpy as np
+
+    if not 0 <= min_agreement <= 1:
+        raise ValueError('layout_min_agreement must be between zero and one')
+    if min_contexts < 1:
+        raise ValueError('layout_min_contexts must be positive')
+    selected = [row for row in rows if row['kind'] == kind and
+                row['contexts'] >= min_contexts and row['agreement'] >= min_agreement]
+    node_set = set(nodes)
+    constraints = []
+    for row in selected:
+        source, target = int(row['source']), int(row['target'])
+        if source not in node_set or target not in node_set:
+            continue
+        dr, dc = DELTAS[row['direction']]
+        weight = max(1e-9, row['contexts'] * row['agreement'] * row['mean_probe_confidence'])
+        constraints.append({'source': source, 'target': target, 'direction': row['direction'],
+                            'dx': dc, 'dy': dr, 'weight': weight,
+                            'contexts': row['contexts'], 'agreement': row['agreement'],
+                            'probe_confidence': row['mean_probe_confidence'],
+                            'independent_reciprocal': row['independent_reciprocal'],
+                            'true_neighbor': row['true_neighbor']})
+    adjacency = {int(node): set() for node in nodes}
+    for edge in constraints:
+        if edge['source'] != edge['target']:
+            adjacency[edge['source']].add(edge['target'])
+            adjacency[edge['target']].add(edge['source'])
+    components, remaining = [], set(adjacency)
+    while remaining:
+        root = min(remaining)
+        pending, component = [root], []
+        remaining.remove(root)
+        while pending:
+            node = pending.pop()
+            component.append(node)
+            for other in sorted(adjacency[node]):
+                if other in remaining:
+                    remaining.remove(other)
+                    pending.append(other)
+        components.append(sorted(component))
+    raw, component_of = {}, {}
+    for component_id, component in enumerate(components):
+        index = {node: i for i, node in enumerate(component)}
+        local = [edge for edge in constraints if edge['source'] in index and edge['target'] in index]
+        matrix, bx, by = [], [], []
+        for edge in local:
+            row = np.zeros(len(component))
+            row[index[edge['target']]] += edge['weight'] ** 0.5
+            row[index[edge['source']]] -= edge['weight'] ** 0.5
+            matrix.append(row)
+            bx.append(edge['dx'] * edge['weight'] ** 0.5)
+            by.append(edge['dy'] * edge['weight'] ** 0.5)
+        anchor = np.zeros(len(component))
+        anchor[0] = max(1.0, sum(edge['weight'] for edge in local) ** 0.5)
+        matrix.append(anchor)
+        bx.append(0.0)
+        by.append(0.0)
+        a = np.stack(matrix)
+        x = np.linalg.lstsq(a, np.asarray(bx), rcond=None)[0]
+        y = np.linalg.lstsq(a, np.asarray(by), rcond=None)[0]
+        for node in component:
+            raw[node] = (float(x[index[node]]), float(y[index[node]]))
+            component_of[node] = component_id
+    # Packing changes only component translations, never learned relative geometry.
+    packed, cursor_x, cursor_y, row_height = {}, 0.0, 0.0, 0.0
+    pack_limit = max(10.0, len(nodes) ** 0.5 * 2.0)
+    for component in components:
+        xs, ys = [raw[n][0] for n in component], [raw[n][1] for n in component]
+        left, top = min(xs), min(ys)
+        width, height = max(max(xs) - left, 0.7), max(max(ys) - top, 0.7)
+        if cursor_x and cursor_x + width > pack_limit:
+            cursor_x, cursor_y, row_height = 0.0, cursor_y + row_height + 1.5, 0.0
+        for node in component:
+            packed[node] = (raw[node][0] - left + cursor_x, raw[node][1] - top + cursor_y)
+        cursor_x += width + 1.5
+        row_height = max(row_height, height)
+    squared, exact_weight, total_weight = 0.0, 0.0, 0.0
+    for edge in constraints:
+        sx, sy = raw[edge['source']]
+        tx, ty = raw[edge['target']]
+        rx, ry = tx - sx - edge['dx'], ty - sy - edge['dy']
+        edge['residual'] = (rx * rx + ry * ry) ** 0.5
+        squared += edge['weight'] * edge['residual'] ** 2
+        total_weight += edge['weight']
+        if edge['residual'] < 0.25:
+            exact_weight += edge['weight']
+    return {
+        'kind': kind, 'min_agreement': min_agreement, 'min_contexts': min_contexts,
+        'positions': [{'node': node, 'x': packed[node][0], 'y': packed[node][1],
+                       'raw_x': raw[node][0], 'raw_y': raw[node][1],
+                       'component': component_of[node]} for node in sorted(raw)],
+        'constraints': constraints,
+        'component_count': len(components), 'constraint_count': len(constraints),
+        'weighted_rmse': (squared / total_weight) ** 0.5 if total_weight else None,
+        'weighted_near_exact_rate': exact_weight / total_weight if total_weight else None,
+        'independent_reciprocal_rate': (sum(edge['independent_reciprocal'] is True for edge in constraints) /
+                                        len(constraints) if constraints else None),
+    }
+
+
 def probe_actions(model, probe, tokenizer, nodes, contexts, graph, layer, batch_size, device, dtype):
     import torch
     from .model import select_cache
@@ -163,7 +270,9 @@ def probe_actions(model, probe, tokenizer, nodes, contexts, graph, layer, batch_
 
 
 def extract_run(run_path, output, contexts_per_node=30, batch_size=64, seed=42,
-                splits=('seen', 'unseen'), include_generated=False, device='auto', precision='auto', sample_ids=None):
+                splits=('seen', 'unseen'), include_generated=False, device='auto', precision='auto', sample_ids=None,
+                layout_kind='reference', layout_min_agreement=0.6, layout_min_contexts=3,
+                layout_all_preprobes=False):
     import torch
     from .config import load_config
     from .model import GridTransformer, Tokenizer
@@ -209,6 +318,10 @@ def extract_run(run_path, output, contexts_per_node=30, batch_size=64, seed=42,
                                                      if known else None)
     rows = summarize_transitions(contexts, events, nodes)
     matched = summarize_transitions(contexts, events, nodes, require_correct_source=True)
+    geometry_rows = rows if layout_all_preprobes else matched
+    geometry = infer_geometry(geometry_rows, nodes, layout_kind,
+                              layout_min_agreement, layout_min_contexts)
+    geometry['source_requires_correct_preprobe'] = not layout_all_preprobes
     def digest(path):
         hasher = hashlib.sha256()
         with path.open('rb') as handle:
@@ -217,9 +330,13 @@ def extract_run(run_path, output, contexts_per_node=30, batch_size=64, seed=42,
         return hasher.hexdigest()
     payload = {'graph': dataset['graph'], 'probe_nodes': nodes, 'contexts': contexts,
                'events': events, 'transitions': rows, 'source_correct_transitions': matched,
+               'model_geometry': geometry,
                'coverage': coverage, 'settings': {'run': str(run_path), 'contexts_per_node': contexts_per_node,
                'seed': seed, 'splits': list(splits), 'include_generated': include_generated,
-               'sample_ids': list(sample_ids or []), 'batch_size': batch_size, 'probe_layer': saved_probe['layer']},
+               'sample_ids': list(sample_ids or []), 'batch_size': batch_size, 'probe_layer': saved_probe['layer'],
+               'layout_kind': layout_kind, 'layout_min_agreement': layout_min_agreement,
+               'layout_min_contexts': layout_min_contexts,
+               'layout_source_requires_correct_preprobe': not layout_all_preprobes},
                'provenance': {name: digest(run_path / name) for name in ('model.pt', 'probe.pt', 'dataset.json', 'config.json')},
                'implementation': {name: digest(Path(__file__).parent / name)
                                   for name in ('extract.py', 'model.py', 'runtime.py')},
@@ -233,6 +350,8 @@ def extract_run(run_path, output, contexts_per_node=30, batch_size=64, seed=42,
     export_csv(output / 'source_correct_transitions.csv', matched)
     export_csv(output / 'contexts.csv', contexts)
     export_csv(output / 'branches.csv', events)
+    export_csv(output / 'geometry_nodes.csv', geometry['positions'])
+    export_csv(output / 'geometry_constraints.csv', geometry['constraints'])
     render_extraction(payload, output / 'extraction.html')
     print(f'Extraction: {output / "extraction.html"}', flush=True)
     return payload
