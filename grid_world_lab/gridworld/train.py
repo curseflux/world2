@@ -10,6 +10,7 @@ import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
+from .data import build_neighbor_table
 from .runtime import autocast, save_json, save_torch, seed_everything
 
 
@@ -34,24 +35,59 @@ def targets_for(tokens, tokenizer, loss_on_prompt=True):
 
 
 @torch.inference_mode()
-def evaluate_loss(model, routes, tokenizer, cfg, device, dtype):
+def evaluate_loss(model, routes, tokenizer, cfg, device, dtype, graph=None):
     if not routes:
-        return {'loss': None, 'perplexity': None, 'token_accuracy': None, 'tokens': 0}
+        return {'loss': None, 'perplexity': None, 'token_accuracy': None, 'tokens': 0,
+                'action_loss': None, 'action_token_accuracy': None, 'action_tokens': 0,
+                'legal_action_accuracy': None, 'legal_action_correct': 0, 'legal_action_tokens': 0}
     model.eval()
     total_loss = total_correct = total_tokens = 0
+    action_loss = action_correct = action_tokens = 0
+    legal_correct = legal_tokens = 0
+    neighbors = build_neighbor_table(graph) if graph is not None else None
     for tokens in route_loader(routes, tokenizer, cfg):
         tokens = tokens.to(device, non_blocking=True)
         targets = targets_for(tokens, tokenizer, cfg.get('loss_on_prompt', True))
         with autocast(device, dtype):
             logits = model(tokens[:, :-1]).logits
             loss = F.cross_entropy(logits.float().flatten(0, 1), targets.flatten(), ignore_index=-100, reduction='sum')
+            per_action_loss = F.cross_entropy(logits[:, 1:].float().flatten(0, 1), targets[:, 1:].flatten(),
+                                              ignore_index=-100, reduction='sum')
         valid = targets != -100
+        valid_actions = targets[:, 1:] != -100
         total_loss += loss.item()
         total_correct += ((logits.argmax(-1) == targets) & valid).sum().item()
         total_tokens += valid.sum().item()
+        predictions = logits.argmax(-1)
+        action_loss += per_action_loss.item()
+        action_correct += ((predictions[:, 1:] == targets[:, 1:]) & valid_actions).sum().item()
+        action_tokens += valid_actions.sum().item()
+        if neighbors is not None:
+            for row in range(tokens.size(0)):
+                current = int(tokens[row, 0].item()) - tokenizer.node_offset + 1
+                destination = int(tokens[row, 1].item()) - tokenizer.node_offset + 1
+                for position in range(1, targets.size(1)):
+                    target = int(targets[row, position].item())
+                    if target == -100:
+                        break
+                    predicted = int(predictions[row, position].item())
+                    legal = predicted == tokenizer.eos_id and current == destination
+                    direction = tokenizer.id_directions.get(predicted)
+                    if direction is not None and direction in neighbors[current]:
+                        legal = True
+                    legal_correct += int(legal)
+                    legal_tokens += 1
+                    true_direction = tokenizer.id_directions.get(target)
+                    if true_direction is not None:
+                        current = neighbors[current][true_direction]
     mean = total_loss / total_tokens
     return {'loss': mean, 'perplexity': math.exp(min(mean, 700)),
-            'token_accuracy': total_correct / total_tokens, 'tokens': total_tokens}
+            'token_accuracy': total_correct / total_tokens, 'tokens': total_tokens,
+            'action_loss': action_loss / action_tokens,
+            'action_token_accuracy': action_correct / action_tokens,
+            'action_tokens': action_tokens,
+            'legal_action_accuracy': legal_correct / legal_tokens if neighbors is not None else None,
+            'legal_action_correct': legal_correct, 'legal_action_tokens': legal_tokens}
 
 
 def train_model(model, dataset, tokenizer, cfg, device, dtype, output):
@@ -129,7 +165,8 @@ def train_model(model, dataset, tokenizer, cfg, device, dtype, output):
         row = {'epoch': epoch + 1, 'step': step, 'training_loss': epoch_loss / epoch_tokens}
         should_evaluate = (epoch + 1) % cfg.get('eval_every_epochs', 1) == 0 or step >= planned_steps or epoch + 1 == cfg['epochs']
         if should_evaluate:
-            validation = evaluate_loss(model, dataset['splits']['validation'], tokenizer, cfg, device, dtype)
+            validation = evaluate_loss(model, dataset['splits']['validation'], tokenizer, cfg, device, dtype,
+                                       dataset.get('graph'))
             row['validation'] = validation
             selection_loss = validation['loss'] if validation['loss'] is not None else row['training_loss']
             if selection_loss < best_loss:
@@ -139,17 +176,26 @@ def train_model(model, dataset, tokenizer, cfg, device, dtype, output):
         history.append(row)
         save_json(output / 'training_history.json', history)
         if should_evaluate:
-            print(f"LM epoch {epoch + 1}: train={row['training_loss']:.4f}, validation={row['validation']['loss']}", flush=True)
+            legal = row['validation']['legal_action_accuracy']
+            legal_text = 'n/a' if legal is None else f'{legal:.4f}'
+            print(f"LM epoch {epoch + 1}: train={row['training_loss']:.4f}, "
+                  f"validation={row['validation']['loss']}, legal_action_accuracy={legal_text}", flush=True)
         if step >= planned_steps:
             break
     if step == 0:
         raise FloatingPointError('Every FP16 optimizer update overflowed. Use bf16/fp32 or allow more epochs for dynamic loss scaling.')
     model.load_state_dict(torch.load(output / 'model.pt', map_location=device, weights_only=True)['state_dict'])
     elapsed = time.perf_counter() - start
+    teacher_forced = {
+        split: evaluate_loss(model, dataset['splits'][split], tokenizer, cfg, device, dtype,
+                             dataset.get('graph'))
+        for split in ('validation', 'seen', 'unseen')
+    }
     summary = {'history': history, 'best_epoch': best_epoch, 'optimization_steps': step, 'skipped_overflow_updates': skipped_overflows,
                'parameters': sum(p.numel() for p in model.parameters()), 'seconds': elapsed,
                'training_tokens_processed': total_positions, 'tokens_per_second': total_positions / max(elapsed, 1e-9),
                'checkpoint_selection': 'validation_loss' if dataset['splits']['validation'] else 'training_loss',
-               'final_validation': evaluate_loss(model, dataset['splits']['validation'], tokenizer, cfg, device, dtype)}
+               'final_validation': teacher_forced['validation'],
+               'teacher_forced_evaluation': teacher_forced}
     save_json(output / 'training.json', summary)
     return summary

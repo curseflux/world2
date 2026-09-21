@@ -1,0 +1,40 @@
+{
+  "data": {
+    "rows": 10,
+    "cols": 10,
+    "mode": "frozen_map",
+    "map_samples": 30,
+    "train_samples": 20000,
+    "min_length": 1,
+    "max_length": 12,
+    "validation_samples": 1000,
+    "probe_train_samples": 5000,
+    "probe_validation_samples": 1000,
+    "test_samples_per_cohort": 500,
+    "seed": 42,
+    "max_attempts": 500000
+  },
+  "model": {"layers": 2, "dim": 64, "heads": 4, "dropout": 0.1},
+  "train": {
+    "epochs": 20,
+    "batch_size": 256,
+    "learning_rate": 0.0003,
+    "weight_decay": 0.01,
+    "device": "auto",
+    "precision": "auto",
+    "log_every_steps": 100
+  },
+  "probe": {
+    "epochs": 100,
+    "batch_size": 2048,
+    "extraction_batch_size": 256,
+    "learning_rate": 0.01
+  },
+  "generation": {
+    "max_new_tokens": 13,
+    "batch_size": 256,
+    "temperature": 1.0,
+    "syntax_only": true
+  },
+  "output": {"directory": "runs/frozen-sparse"}
+}

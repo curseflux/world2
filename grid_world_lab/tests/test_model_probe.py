@@ -131,6 +131,19 @@ class LossTests(unittest.TestCase):
         expected = sum(row["loss"] * row["tokens"] for row in singles) / sum(row["tokens"] for row in singles)
         self.assertAlmostEqual(expected, combined["loss"], places=6)
         self.assertEqual(8, combined["tokens"])
+        self.assertEqual(6, combined["action_tokens"])
+
+    def test_legal_action_metric_excludes_destination_prediction(self):
+        config = {"batch_size": 2, "num_workers": 0, "device": "cpu", "loss_on_prompt": True}
+        graph = {"rows": 3, "cols": 3, "nodes": [1, 2, 5, 6, 8],
+                 "edges": [[1, 2], [1, 5], [5, 6], [6, 8]]}
+        result = evaluate_loss(self.model, self.routes, self.tokenizer, config,
+                               torch.device("cpu"), torch.float32, graph)
+        self.assertEqual(6, result["legal_action_tokens"])
+        self.assertEqual(6, result["action_tokens"])
+        self.assertIsNotNone(result["legal_action_accuracy"])
+        self.assertGreaterEqual(result["legal_action_accuracy"], 0)
+        self.assertLessEqual(result["legal_action_accuracy"], 1)
 
 
 class SentinelModel:

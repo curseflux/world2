@@ -12,7 +12,8 @@ from typing import Any
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "data": {
-        "rows": 10, "cols": 10, "train_samples": 20000,
+        "rows": 10, "cols": 10, "mode": "union", "map_samples": None,
+        "train_samples": 20000,
         "min_length": 1, "max_length": 32,
         "heldout_min_length": None, "heldout_max_length": None,
         "validation_samples": 1000, "probe_train_samples": 2000,
@@ -120,13 +121,21 @@ def validate_config(config: dict[str, Any]) -> None:
         "data.seed", "train.seed", "probe.seed", "generation.seed",
     ):
         integer(path, 0)
-    for path in ("data.heldout_min_length", "data.heldout_max_length", "model.context_length", "train.max_steps", "probe.max_train_positions"):
+    for path in ("data.map_samples", "data.heldout_min_length", "data.heldout_max_length", "model.context_length", "train.max_steps", "probe.max_train_positions"):
         integer(path, optional=True)
     integer("probe.layer", -1)
     if config["data"]["rows"] * config["data"]["cols"] < 2:
         raise ValueError("The grid must contain at least two nodes for positive-length walks.")
     if config["data"]["min_length"] > config["data"]["max_length"]:
         raise ValueError("data.min_length exceeds data.max_length.")
+    if config["data"]["mode"] not in {"union", "frozen_map"}:
+        raise ValueError("data.mode must be 'union' or 'frozen_map'.")
+    map_samples = config["data"]["map_samples"]
+    if config["data"]["mode"] == "frozen_map":
+        if map_samples is None:
+            raise ValueError("data.map_samples is required when data.mode='frozen_map'.")
+        if map_samples > config["data"]["train_samples"]:
+            raise ValueError("data.map_samples must not exceed data.train_samples.")
     heldout_min = config["data"]["heldout_min_length"] or config["data"]["min_length"]
     heldout_max = config["data"]["heldout_max_length"] or config["data"]["max_length"]
     if heldout_min > heldout_max:

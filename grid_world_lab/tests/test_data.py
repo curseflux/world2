@@ -91,9 +91,38 @@ class DataTests(unittest.TestCase):
                                    "probe_validation_samples": 0})
         self.assertEqual(train_only["graph"], self.dataset["graph"])
 
+    def test_frozen_map_expands_training_without_expanding_graph(self):
+        config = {**self.config, "mode": "frozen_map", "map_samples": 12,
+                  "train_samples": 300, "test_samples_per_cohort": 8}
+        dataset = build_dataset(config)
+        graph, train = dataset["graph"], dataset["splits"]["train"]
+        self.assertEqual(300, len(train))
+        self.assertEqual(12, dataset["sampling"]["map_samples"])
+        map_nodes = {node for route in train[:12] for node in route["nodes"]}
+        map_edges = {tuple(sorted(edge)) for route in train[:12]
+                     for edge in zip(route["nodes"], route["nodes"][1:])}
+        self.assertEqual(map_nodes, set(graph["nodes"]))
+        self.assertEqual(map_edges, {tuple(edge) for edge in graph["edges"]})
+        for route in train[12:]:
+            for node, direction, next_node in zip(route["nodes"], route["directions"], route["nodes"][1:]):
+                self.assertEqual(next_node, graph_neighbor(graph, node, direction))
+        training_pairs = {(route["origin"], route["destination"]) for route in train}
+        self.assertTrue(dataset["splits"]["unseen"])
+        self.assertTrue(all((route["origin"], route["destination"]) not in training_pairs
+                            for route in dataset["splits"]["unseen"]))
+        self.assertEqual(sum(len(route["directions"]) for route in train),
+                         sum(graph["edge_counts"].values()))
+        self.assertEqual(sum(len(route["directions"]) for route in train[:12]),
+                         sum(graph["map_edge_counts"].values()))
+
     def test_input_validation(self):
         for patch in ({"rows": 1, "cols": 1}, {"train_samples": 0},
                       {"min_length": 8, "max_length": 7}, {"max_attempts": 0}):
+            with self.assertRaises(ValueError):
+                build_dataset({**self.config, **patch})
+        for patch in ({"mode": "invalid"},
+                      {"mode": "frozen_map", "map_samples": 31},
+                      {"mode": "frozen_map", "map_samples": 0}):
             with self.assertRaises(ValueError):
                 build_dataset({**self.config, **patch})
 
@@ -136,6 +165,17 @@ class ConfigTests(unittest.TestCase):
         config = load_config(overrides=["train.device=cuda:1", "probe.cache_gpu_fraction=0"])
         self.assertEqual("cuda:1", config["train"]["device"])
         self.assertEqual(0, config["probe"]["cache_gpu_fraction"])
+
+    def test_frozen_map_configuration_validation(self):
+        config = load_config(overrides=["data.mode=frozen_map", "data.map_samples=30",
+                                        "data.train_samples=1000"])
+        self.assertEqual("frozen_map", config["data"]["mode"])
+        self.assertEqual(30, config["data"]["map_samples"])
+        for overrides in (["data.mode=bad"],
+                          ["data.mode=frozen_map"],
+                          ["data.mode=frozen_map", "data.map_samples=31", "data.train_samples=30"]):
+            with self.assertRaises(ValueError):
+                load_config(overrides=overrides)
 
 
 if __name__ == "__main__":

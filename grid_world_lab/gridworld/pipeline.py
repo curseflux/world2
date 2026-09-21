@@ -54,8 +54,15 @@ def prepare(config, output, resume=False):
         json_write(output / 'dataset.json', dataset)
     for warning in dataset.get('split_warnings', []):
         print(f'DATA WARNING: {warning}', flush=True)
-    print(f"Data: {len(dataset['graph']['nodes'])} nodes, {len(dataset['graph']['edges'])} undirected edges; "
+    sampling = dataset.get('sampling', {})
+    mode_text = f"mode={sampling.get('mode', 'union')}, map_samples={sampling.get('map_samples', len(dataset['splits']['train']))}; "
+    print(f"Data: {mode_text}{len(dataset['graph']['nodes'])} nodes, {len(dataset['graph']['edges'])} undirected edges; "
           + ', '.join(f'{key}={len(routes)}' for key, routes in dataset['splits'].items()), flush=True)
+    coverage = dataset['graph'].get('training_coverage')
+    if coverage:
+        print(f"Coverage: origins={coverage['unique_origins']}/{len(dataset['graph']['nodes'])}, "
+              f"directed_edges={coverage['observed_directed_edges']}/{coverage['legal_directed_edges']}, "
+              f"direction_steps={coverage['direction_steps']}", flush=True)
     return dataset
 
 

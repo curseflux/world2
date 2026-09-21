@@ -128,8 +128,12 @@ def _positive_int(cfg: dict[str, Any], key: str, default: int, *, allow_zero: bo
 
 
 def build_dataset(config: dict[str, Any]) -> dict[str, Any]:
-    """Build training walks, their exact union graph, and disjoint held-out splits.
+    """Build a sparse graph, LM training walks, and disjoint held-out splits.
 
+    In ``union`` mode every training walk contributes to the graph. In
+    ``frozen_map`` mode the first ``map_samples`` walks define the graph and the
+    remaining training walks are sampled only from its existing edges. Unseen
+    test endpoint pairs are reserved before those extra walks are generated.
     The training sample count is exact and duplicate training walks are allowed.
     All held-out complete token sequences are unique and excluded from training
     and every other held-out split. Test cohorts are reserved before auxiliary
@@ -141,7 +145,19 @@ def build_dataset(config: dict[str, Any]) -> dict[str, Any]:
     cols = _positive_int(config, "cols", 10)
     if rows * cols < 2:
         raise ValueError("A positive-length walk requires at least two grid nodes.")
+    mode = config.get("mode", "union")
+    if mode not in {"union", "frozen_map"}:
+        raise ValueError("data.mode must be 'union' or 'frozen_map'.")
     train_count = _positive_int(config, "train_samples", 20000)
+    raw_map_count = config.get("map_samples")
+    if mode == "frozen_map":
+        map_count = _positive_int(config, "map_samples", train_count)
+        if map_count > train_count:
+            raise ValueError("data.map_samples must not exceed data.train_samples.")
+    else:
+        if raw_map_count is not None:
+            _positive_int(config, "map_samples", train_count)
+        map_count = train_count
     min_length = _positive_int(config, "min_length", 1)
     max_length = _positive_int(config, "max_length", 32)
     if min_length > max_length:
@@ -172,32 +188,27 @@ def build_dataset(config: dict[str, Any]) -> dict[str, Any]:
         for node in full_nodes
     }
     train_rng = _rng(seed, "train")
-    train = []
-    edge_counts: Counter[str] = Counter()
-    directed_counts: Counter[str] = Counter()
-    node_counts: Counter[str] = Counter()
-    starts: Counter[str] = Counter()
-    ends: Counter[str] = Counter()
+    train: list[dict[str, Any]] = []
     edges: set[tuple[int, int]] = set()
-    for index in range(train_count):
+    map_edge_counts: Counter[str] = Counter()
+    map_directed_counts: Counter[str] = Counter()
+    map_node_counts: Counter[str] = Counter()
+    for index in range(map_count):
         route = _random_route(train_rng, full_nodes, full_neighbors, min_length, max_length)
         route["id"] = f"train-{index + 1}"
         train.append(route)
-        node_counts.update(str(node) for node in route["nodes"])
-        starts[str(route["origin"])] += 1
-        ends[str(route["destination"])] += 1
+        map_node_counts.update(str(node) for node in route["nodes"])
         for u, v in zip(route["nodes"], route["nodes"][1:]):
             edges.add((min(u, v), max(u, v)))
-            edge_counts[edge_key(u, v)] += 1
-            directed_counts[f"{u}-{v}"] += 1
+            map_edge_counts[edge_key(u, v)] += 1
+            map_directed_counts[f"{u}-{v}"] += 1
     graph: dict[str, Any] = {
         "rows": rows, "cols": cols,
-        "nodes": sorted(int(node) for node in node_counts),
+        "nodes": sorted(int(node) for node in map_node_counts),
         "edges": [list(edge) for edge in sorted(edges)],
-        "node_counts": dict(sorted(node_counts.items(), key=lambda item: int(item[0]))),
-        "edge_counts": dict(sorted(edge_counts.items())),
-        "directed_edge_counts": dict(sorted(directed_counts.items())),
-        "start_counts": dict(starts), "end_counts": dict(ends),
+        "map_node_counts": dict(sorted(map_node_counts.items(), key=lambda item: int(item[0]))),
+        "map_edge_counts": dict(sorted(map_edge_counts.items())),
+        "map_directed_edge_counts": dict(sorted(map_directed_counts.items())),
         "undirected": True,
     }
     neighbors = build_neighbor_table(graph)
@@ -206,21 +217,14 @@ def build_dataset(config: dict[str, Any]) -> dict[str, Any]:
     graph["full_grid_edge_count"] = sum(len(value) for value in full_neighbors.values()) // 2
     graph["edge_density"] = len(edges) / graph["full_grid_edge_count"]
     graph["node_coverage"] = len(graph["nodes"]) / (rows * cols)
-    train_pairs = {(route["origin"], route["destination"]) for route in train}
     reachable_pairs = _reachable_pairs(neighbors, heldout_min, heldout_max)
-    admissible = {"seen": reachable_pairs & train_pairs, "unseen": reachable_pairs - train_pairs}
     used = {route_key(route) for route in train}
-    splits: dict[str, list[dict[str, Any]]] = {"train": train}
     warnings: list[str] = []
-    split_stats: dict[str, Any] = {
-        "train": {"requested": train_count, "actual": train_count, "attempts": train_count,
-                  "unique_routes": len(used), "unique_ordered_pairs": len(train_pairs)},
-    }
-    for split in ("seen", "unseen", "validation", "probe_train", "probe_validation"):
+
+    def sample_split(split: str, available_pairs: set[tuple[int, int]] | None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         requested = counts[split]
         routes: list[dict[str, Any]] = []
         attempts = 0
-        available_pairs = admissible.get(split)
         if requested and available_pairs is not None and not available_pairs:
             warnings.append(
                 f"{split}: requested {requested}, produced 0; no reachable ordered origin-destination "
@@ -247,18 +251,100 @@ def build_dataset(config: dict[str, Any]) -> dict[str, Any]:
                     "Unique disjoint routes may be exhausted or rare under random-walk sampling. "
                     "Increase max_attempts/max_length, reduce split sizes, or change the graph seed."
                 )
-        splits[split] = routes
-        split_stats[split] = {
+        stats = {
             "requested": requested, "actual": len(routes), "attempts": attempts,
             "unique_routes": len(routes),
             "unique_ordered_pairs": len({(route["origin"], route["destination"]) for route in routes}),
             "eligible_ordered_pairs": len(available_pairs) if available_pairs is not None else len(reachable_pairs),
         }
+        return routes, stats
+
+    early_unseen: list[dict[str, Any]] | None = None
+    early_unseen_stats: dict[str, Any] | None = None
+    expansion_attempts = 0
+    if mode == "frozen_map":
+        builder_pairs = {(route["origin"], route["destination"]) for route in train}
+        early_unseen, early_unseen_stats = sample_split("unseen", reachable_pairs - builder_pairs)
+        reserved_unseen_pairs = {(route["origin"], route["destination"]) for route in early_unseen}
+        expansion_rng = _rng(seed, "frozen_map_train")
+        while len(train) < train_count and expansion_attempts < max_attempts:
+            expansion_attempts += 1
+            route = _random_route(expansion_rng, graph["nodes"], neighbors, min_length, max_length)
+            if (route["origin"], route["destination"]) in reserved_unseen_pairs:
+                continue
+            route["id"] = f"train-{len(train) + 1}"
+            train.append(route)
+            used.add(route_key(route))
+        if len(train) < train_count:
+            raise ValueError(
+                f"Could only generate {len(train)} of {train_count} frozen-map training walks after "
+                f"{expansion_attempts} attempts while protecting unseen endpoint pairs. Reduce "
+                "data.test_samples_per_cohort or increase data.max_attempts."
+            )
+
+    # These occurrence counts describe all LM training data. The map_* counts
+    # above preserve the separate provenance of the walks that defined the map.
+    node_counts: Counter[str] = Counter()
+    edge_counts: Counter[str] = Counter()
+    directed_counts: Counter[str] = Counter()
+    starts: Counter[str] = Counter()
+    ends: Counter[str] = Counter()
+    for route in train:
+        node_counts.update(str(node) for node in route["nodes"])
+        starts[str(route["origin"])] += 1
+        ends[str(route["destination"])] += 1
+        for u, v in zip(route["nodes"], route["nodes"][1:]):
+            edge_counts[edge_key(u, v)] += 1
+            directed_counts[f"{u}-{v}"] += 1
+    graph.update({
+        "node_counts": dict(sorted(node_counts.items(), key=lambda item: int(item[0]))),
+        "edge_counts": dict(sorted(edge_counts.items())),
+        "directed_edge_counts": dict(sorted(directed_counts.items())),
+        "start_counts": dict(sorted(starts.items(), key=lambda item: int(item[0]))),
+        "end_counts": dict(sorted(ends.items(), key=lambda item: int(item[0]))),
+    })
+    train_pairs = {(route["origin"], route["destination"]) for route in train}
+    endpoint_nodes = {route["origin"] for route in train} | {route["destination"] for route in train}
+    origin_nodes = {route["origin"] for route in train}
+    graph["training_coverage"] = {
+        "direction_steps": sum(len(route["directions"]) for route in train),
+        "unique_routes": len({route_key(route) for route in train}),
+        "unique_ordered_pairs": len(train_pairs),
+        "unique_origins": len(origin_nodes),
+        "unique_destinations": len({route["destination"] for route in train}),
+        "nodes_never_origin": sorted(set(graph["nodes"]) - origin_nodes),
+        "nodes_never_endpoint": sorted(set(graph["nodes"]) - endpoint_nodes),
+        "observed_directed_edges": len(directed_counts),
+        "legal_directed_edges": sum(graph["degrees"].values()),
+        "unobserved_directed_edges": sum(graph["degrees"].values()) - len(directed_counts),
+    }
+
+    used.update(route_key(route) for route in train)
+    seen, seen_stats = sample_split("seen", reachable_pairs & train_pairs)
+    if early_unseen is None:
+        unseen, unseen_stats = sample_split("unseen", reachable_pairs - train_pairs)
+    else:
+        unseen, unseen_stats = early_unseen, early_unseen_stats
+    splits: dict[str, list[dict[str, Any]]] = {"train": train, "seen": seen, "unseen": unseen}
+    split_stats: dict[str, Any] = {
+        "train": {"requested": train_count, "actual": len(train),
+                  "attempts": map_count + expansion_attempts,
+                  "map_samples": map_count, "expansion_attempts": expansion_attempts,
+                  "unique_routes": len({route_key(route) for route in train}),
+                  "unique_ordered_pairs": len(train_pairs)},
+        "seen": seen_stats, "unseen": unseen_stats,
+    }
+    for split in ("validation", "probe_train", "probe_validation"):
+        routes, stats = sample_split(split, None)
+        splits[split], split_stats[split] = routes, stats
     return {
         "graph": graph, "splits": splits, "split_warnings": warnings,
         "split_stats": split_stats,
-        "sampling": {"seed": seed, "train_length_range": [min_length, max_length],
+        "sampling": {"seed": seed, "mode": mode, "map_samples": map_count,
+                     "train_length_range": [min_length, max_length],
                      "heldout_length_range": [heldout_min, heldout_max],
                      "pair_semantics": "ordered", "heldout_distribution": "uniform start and length; uniform legal moves; rejection by split constraints",
-                     "split_reservation_order": ["seen", "unseen", "validation", "probe_train", "probe_validation"]},
+                     "split_reservation_order": (["unseen", "train_expansion", "seen", "validation", "probe_train", "probe_validation"]
+                                                 if mode == "frozen_map" else
+                                                 ["seen", "unseen", "validation", "probe_train", "probe_validation"])},
     }
