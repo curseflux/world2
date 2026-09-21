@@ -86,6 +86,17 @@ class MetricsTests(unittest.TestCase):
         # Each 2x2 corner has three geometrically in-bounds directions.
         self.assertAlmostEqual(stats["uniform_inbounds_illegal_baseline"], 0.5)
 
+    def test_four_direction_density_and_baseline(self):
+        cardinal = graph()
+        cardinal["directions"] = ["N", "E", "S", "W"]
+        result = summarize(cardinal, [sample(0, [event(1, 2), event(2, 4, direction="S")])])
+        stats = result["summary"]
+        self.assertEqual(stats["direction_count"], 4)
+        self.assertEqual(stats["grid_possible_edge_count"], 4)
+        self.assertEqual(stats["graph_density_full_grid"], 0.75)
+        self.assertAlmostEqual(stats["uniform_direction_illegal_baseline"], (3 / 4 + 2 / 4) / 2)
+        self.assertIsNone(stats["uniform8_illegal_baseline"])
+
     def test_empty_selection_has_undefined_precision_and_zero_coverage(self):
         result = summarize(graph(), [])
         stats = result["summary"]

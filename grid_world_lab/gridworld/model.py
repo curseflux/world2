@@ -13,16 +13,19 @@ from .data import DIRECTIONS
 
 
 class Tokenizer:
-    """Atomic node IDs, eight actions, EOS and PAD; no coordinate leakage."""
+    """Atomic node IDs, configured compass actions, EOS and PAD."""
 
     pad_id = 0
     eos_id = 1
 
-    def __init__(self, num_nodes: int):
+    def __init__(self, num_nodes: int, directions=None):
         self.num_nodes = num_nodes
-        self.direction_ids = {d: i + 2 for i, d in enumerate(DIRECTIONS)}
+        self.directions = tuple(DIRECTIONS if directions is None else directions)
+        if not self.directions or len(set(self.directions)) != len(self.directions) or any(d not in DIRECTIONS for d in self.directions):
+            raise ValueError("Tokenizer directions must be a nonempty unique subset of compass directions")
+        self.direction_ids = {d: i + 2 for i, d in enumerate(self.directions)}
         self.id_directions = {i: d for d, i in self.direction_ids.items()}
-        self.node_offset = len(DIRECTIONS) + 2
+        self.node_offset = len(self.directions) + 2
         self.vocab_size = self.node_offset + num_nodes
 
     def node(self, node: int) -> int:

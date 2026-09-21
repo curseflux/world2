@@ -12,7 +12,8 @@ from typing import Any
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "data": {
-        "rows": 10, "cols": 10, "mode": "union", "map_samples": None,
+        "rows": 10, "cols": 10, "num_directions": 8,
+        "mode": "union", "map_samples": None,
         "train_samples": 20000,
         "min_length": 1, "max_length": 32,
         "heldout_min_length": None, "heldout_max_length": None,
@@ -107,7 +108,7 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError(f"{path} is outside its allowed range.")
 
     for path in (
-        "data.rows", "data.cols", "data.train_samples", "data.min_length", "data.max_length",
+        "data.rows", "data.cols", "data.num_directions", "data.train_samples", "data.min_length", "data.max_length",
         "data.max_attempts", "model.layers", "model.dim", "model.heads", "model.mlp_ratio",
         "train.epochs", "train.batch_size", "train.gradient_accumulation", "train.eval_every_epochs",
         "train.log_every_steps", "train.cpu_threads", "probe.epochs", "probe.batch_size", "probe.extraction_batch_size",
@@ -126,6 +127,8 @@ def validate_config(config: dict[str, Any]) -> None:
     integer("probe.layer", -1)
     if config["data"]["rows"] * config["data"]["cols"] < 2:
         raise ValueError("The grid must contain at least two nodes for positive-length walks.")
+    if config["data"]["num_directions"] not in {4, 8}:
+        raise ValueError("data.num_directions must be 4 or 8.")
     if config["data"]["min_length"] > config["data"]["max_length"]:
         raise ValueError("data.min_length exceeds data.max_length.")
     if config["data"]["mode"] not in {"union", "frozen_map"}:

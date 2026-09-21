@@ -66,6 +66,20 @@ class DataTests(unittest.TestCase):
         self.assertEqual("1-5", edge_key(5, 1))
         self.assertEqual(8, len(DIRECTIONS))
 
+    def test_four_direction_mode_excludes_diagonals_everywhere(self):
+        dataset = build_dataset({**self.config, "num_directions": 4})
+        graph = dataset["graph"]
+        self.assertEqual(["N", "E", "S", "W"], graph["directions"])
+        self.assertEqual(4, graph["num_directions"])
+        self.assertEqual(24, graph["full_grid_edge_count"])
+        self.assertTrue(all(direction in {"N", "E", "S", "W"}
+                            for split in dataset["splits"].values()
+                            for route in split for direction in route["directions"]))
+        self.assertTrue(all(abs((u - 1) // 4 - (v - 1) // 4) +
+                            abs((u - 1) % 4 - (v - 1) % 4) == 1
+                            for u, v in graph["edges"]))
+        self.assertIsNone(graph_neighbor(graph, 1, "SE"))
+
     def test_named_random_streams_are_repeatable(self):
         self.assertEqual(self.dataset, build_dataset(copy.deepcopy(self.config)))
         changed = build_dataset({**self.config, "test_samples_per_cohort": 1})
@@ -117,7 +131,8 @@ class DataTests(unittest.TestCase):
 
     def test_input_validation(self):
         for patch in ({"rows": 1, "cols": 1}, {"train_samples": 0},
-                      {"min_length": 8, "max_length": 7}, {"max_attempts": 0}):
+                      {"min_length": 8, "max_length": 7}, {"max_attempts": 0},
+                      {"num_directions": 6}):
             with self.assertRaises(ValueError):
                 build_dataset({**self.config, **patch})
         for patch in ({"mode": "invalid"},
@@ -176,6 +191,12 @@ class ConfigTests(unittest.TestCase):
                           ["data.mode=frozen_map", "data.map_samples=31", "data.train_samples=30"]):
             with self.assertRaises(ValueError):
                 load_config(overrides=overrides)
+
+    def test_direction_count_configuration(self):
+        self.assertEqual(4, load_config(overrides=["data.num_directions=4"])["data"]["num_directions"])
+        for value in (0, 6, 9):
+            with self.assertRaises(ValueError):
+                load_config(overrides=[f"data.num_directions={value}"])
 
 
 if __name__ == "__main__":

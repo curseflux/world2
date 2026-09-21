@@ -78,7 +78,13 @@ python -m gridworld report --run runs/smoke
 
 ## Exactly what the data means
 
-Nodes are numbered `1..rows*cols` in row-major order. Node 1 is the upper-left cell; increasing rows goes south and increasing columns goes east. For a 10 × 10 grid, the top row contains nodes 1–10 and the next row contains 11–20. The eight tokens `N, NE, E, SE, S, SW, W, NW` are **absolute compass directions**, not turns relative to the previous heading. Diagonal edges may cross in the drawing without creating a new intersection node.
+Nodes are numbered `1..rows*cols` in row-major order. Node 1 is the upper-left cell; increasing rows goes south and increasing columns goes east. For a 10 × 10 grid, the top row contains nodes 1–10 and the next row contains 11–20. `data.num_directions=8` uses `N, NE, E, SE, S, SW, W, NW`; setting it to `4` uses `N, E, S, W`. These are **absolute compass directions**, not turns relative to the previous heading. In eight-direction mode, diagonal edges may cross in the drawing without creating a new intersection node.
+
+For example, run the frozen-map experiment using only cardinal directions with:
+
+```powershell
+python -m gridworld run --config configs/frozen_sparse.json --output runs/frozen-sparse-4dir --set data.num_directions=4
+```
 
 In the original `data.mode="union"`, for each of exactly `data.train_samples` walks:
 
@@ -102,7 +108,7 @@ Length counts **directions**, not tokens. A walk with `n` steps visits `n+1` nod
 ORIGIN DESTINATION DIRECTION_1 ... DIRECTION_n EOS
 ```
 
-This is `n+3` atomic tokens. Node numbers are lookup-table tokens; the model is not given their coordinates or decimal-digit structure. The token vocabulary contains all grid node IDs, eight directions, `EOS`, and `PAD`. Right-padding is excluded from the language-model loss.
+This is `n+3` atomic tokens. Node numbers are lookup-table tokens; the model is not given their coordinates or decimal-digit structure. The token vocabulary contains all grid node IDs, the configured direction tokens, `EOS`, and `PAD`. Right-padding is excluded from the language-model loss.
 
 ## Held-out routes and the two experiments
 

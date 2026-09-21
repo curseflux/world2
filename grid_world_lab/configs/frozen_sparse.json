@@ -2,6 +2,7 @@
   "data": {
     "rows": 10,
     "cols": 10,
+    "num_directions": 8,
     "mode": "frozen_map",
     "map_samples": 30,
     "train_samples": 20000,

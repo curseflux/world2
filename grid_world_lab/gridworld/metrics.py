@@ -8,6 +8,8 @@ are different questions and must not be counted interchangeably.
 from collections import Counter, defaultdict, deque
 import math
 
+from .data import DELTAS, DIRECTIONS
+
 
 KINDS = ("legal_correct", "legal_mismatch", "illegal")
 
@@ -25,16 +27,17 @@ def _mean(values):
     return sum(values) / len(values) if values else None
 
 
-def _grid_neighbors(node, rows, cols):
+def _grid_neighbors(node, rows, cols, directions=DIRECTIONS):
     if not 1 <= node <= rows * cols:
         return []
     row, col = divmod(node - 1, cols)
-    return [
-        rr * cols + cc + 1
-        for rr in range(max(0, row - 1), min(rows, row + 2))
-        for cc in range(max(0, col - 1), min(cols, col + 2))
-        if (rr, cc) != (row, col)
-    ]
+    result = []
+    for direction in directions:
+        dr, dc = DELTAS[direction]
+        rr, cc = row + dr, col + dc
+        if 0 <= rr < rows and 0 <= cc < cols:
+            result.append(rr * cols + cc + 1)
+    return result
 
 
 def _count(mapping, key):
@@ -179,14 +182,18 @@ def summarize(graph, samples, config=None):
     cols = int(graph.get("cols", graph.get("width", 0)))
     if rows <= 0 or cols <= 0:
         raise ValueError("graph rows and cols must be positive")
+    directions = tuple(graph.get("directions", DIRECTIONS))
+    if not directions or len(set(directions)) != len(directions) or any(direction not in DELTAS for direction in directions):
+        raise ValueError("graph directions must be a nonempty unique set of compass actions")
+    direction_count = len(directions)
     true_nodes = {int(node) for node in graph["nodes"]}
     if any(node < 1 or node > rows * cols for node in true_nodes):
         raise ValueError("True node IDs must be inside the configured grid")
     true_edges = {edge_key(*edge) for edge in graph["edges"]}
     if any(u == v or u not in true_nodes or v not in true_nodes for u, v in true_edges):
         raise ValueError("True edges must join two distinct retained nodes")
-    if any(v not in _grid_neighbors(u, rows, cols) for u, v in true_edges):
-        raise ValueError("True edges must join adjacent eight-neighbor grid nodes")
+    if any(v not in _grid_neighbors(u, rows, cols, directions) for u, v in true_edges):
+        raise ValueError("True edges must join nodes adjacent under graph.directions")
     true_adjacency = defaultdict(set)
     for u, v in true_edges:
         true_adjacency[u].add(v)
@@ -241,8 +248,8 @@ def summarize(graph, samples, config=None):
             confidence_by_kind[kind].append(confidence)
             source_counts[source] += 1
             source_illegal_counts[source] += kind == "illegal"
-            illegal_baseline_sum += 1 - len(true_adjacency[source]) / 8
-            grid_degree = len(_grid_neighbors(source, rows, cols))
+            illegal_baseline_sum += 1 - len(true_adjacency[source]) / direction_count
+            grid_degree = len(_grid_neighbors(source, rows, cols, directions))
             if grid_degree:
                 inbounds_baseline_sum += 1 - len(true_adjacency[source]) / grid_degree
                 inbounds_baseline_count += 1
@@ -295,13 +302,15 @@ def summarize(graph, samples, config=None):
     errors = kind_counts["illegal"] + kind_counts["legal_mismatch"]
     edge_training_total = sum(_edge_count(train_edge_counts, edge) for edge in true_edges)
     node_training_total = sum(_count(train_node_counts, node) for node in true_nodes)
-    grid_max_edges = rows * (cols - 1) + (rows - 1) * cols + 2 * (rows - 1) * (cols - 1)
+    grid_max_edges = sum(len(_grid_neighbors(node, rows, cols, directions))
+                         for node in range(1, rows * cols + 1)) // 2
     visited_max_edges = sum(target in true_nodes for node in true_nodes
-                            for target in _grid_neighbors(node, rows, cols)) // 2
+                            for target in _grid_neighbors(node, rows, cols, directions)) // 2
     summary = {
         "sample_count": sample_count, "direction_steps": total_steps,
         "true_node_count": len(true_nodes), "true_edge_count": len(true_edges),
-        "grid_node_count": rows * cols, "grid_possible_edge_count": grid_max_edges,
+        "grid_node_count": rows * cols, "direction_count": direction_count,
+        "grid_possible_edge_count": grid_max_edges,
         "visited_possible_grid_edge_count": visited_max_edges,
         "graph_density_full_grid": _ratio(len(true_edges), grid_max_edges),
         "graph_density_visited_nodes": _ratio(len(true_edges), visited_max_edges),
@@ -342,8 +351,11 @@ def summarize(graph, samples, config=None):
             sum(_edge_count(train_edge_counts, edge) for edge in running_solid_edges), edge_training_total),
         "training_frequency_weighted_node_recall": _ratio(
             sum(_count(train_node_counts, node) for node in recovered_nodes), node_training_total),
-        "uniform8_illegal_baseline": _ratio(illegal_baseline_sum, total_steps),
-        "illegal_rate_over_uniform8_baseline": _ratio(kind_counts["illegal"], illegal_baseline_sum),
+        "uniform_direction_illegal_baseline": _ratio(illegal_baseline_sum, total_steps),
+        "illegal_rate_over_uniform_direction_baseline": _ratio(kind_counts["illegal"], illegal_baseline_sum),
+        "uniform8_illegal_baseline": _ratio(illegal_baseline_sum, total_steps) if direction_count == 8 else None,
+        "illegal_rate_over_uniform8_baseline": (_ratio(kind_counts["illegal"], illegal_baseline_sum)
+                                                 if direction_count == 8 else None),
         "uniform_inbounds_illegal_baseline": _ratio(inbounds_baseline_sum, inbounds_baseline_count),
         "uniform_inbounds_baseline_steps": inbounds_baseline_count,
         "mean_probe_confidence": _mean([value for values in confidence_by_kind.values() for value in values]),
@@ -420,7 +432,8 @@ def summarize(graph, samples, config=None):
         illegal = sum(source_illegal_counts[node] for node in sources)
         degree_rows.append({"true_degree": degree, "direction_steps": exposures,
                             "illegal_events": illegal, "illegal_event_rate": _ratio(illegal, exposures),
-                            "uniform8_illegal_baseline": 1 - degree / 8})
+                            "uniform_direction_illegal_baseline": 1 - degree / direction_count,
+                            "uniform8_illegal_baseline": 1 - degree / 8 if direction_count == 8 else None})
     result = {
         "summary": summary, "termination_counts": termination_counts,
         "edge_rows": edge_rows, "node_rows": node_rows,
@@ -436,10 +449,11 @@ def summarize(graph, samples, config=None):
             "edge_recall": "Recovered true undirected edges / all true edges. All line types contribute; solid_edge_recall restricts to legal_correct events.",
             "training_frequency_weighted_edge_recall": "Training traversals on recovered true edges / all training traversals. This complements, rather than replaces, unweighted coverage.",
             "usage_share_ratio_to_training": "Reconstruction relative frequency / training relative frequency; descriptive usage, not a correctness score. Undefined for unseen training items or empty reconstruction.",
-            "uniform8_illegal_baseline": "Mean 1-degree(current inferred node)/8 over generated direction opportunities; uniform compass-action baseline including boundary-invalid moves.",
+            "uniform_direction_illegal_baseline": "Mean 1-degree(current inferred node)/configured direction count over generated direction opportunities; includes boundary-invalid moves.",
+            "uniform8_illegal_baseline": "Legacy eight-direction alias; null for four-direction experiments.",
             "uniform_inbounds_illegal_baseline": "Mean missing-edge fraction among geometrically in-bounds compass actions at generated source nodes. Excludes nodes with no in-bounds action.",
-            "graph_density_full_grid": "True edges / all undirected eight-neighbor edges in the entire rectangular grid.",
-            "graph_density_visited_nodes": "True edges / potential eight-neighbor edges whose endpoints were both retained.",
+            "graph_density_full_grid": "True edges / all undirected edges allowed by the configured directions in the entire rectangular grid.",
+            "graph_density_visited_nodes": "True edges / potential configured-direction edges whose endpoints were both retained.",
             "fake_edges_per_true_edge": "Distinct absent edges / true edge count, indicating corruption relative to map size without assigning arbitrary density penalties.",
             "reference_count": "Usage in held-out reference walks, an exposure baseline; zero exposure does not establish that an item was forgotten.",
             "node_coverage": "Fraction of retained nodes visited by reconstruction, including supplied origins. predicted_target_node_coverage excludes supplied origins and counts only post-action probe predictions.",

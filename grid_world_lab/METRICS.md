@@ -66,16 +66,16 @@ There are two valid concerns: a sparse map is more easily distorted by one extra
 
 **Relative topological corruption:** `fake_edges_per_true_edge = |R \ T| / |T|`. One fake edge is a larger fraction of a sparse map. Report it together with ordinary precision and recall, and the actual edge counts. It does not distinguish an innocuous redundant connection from a major shortcut; topology distortion addresses that below.
 
-**Action opportunity baseline:** at a current inferred node of true degree `d`, choosing uniformly among all eight compass actions would be illegal with probability `1 − d/8`. `uniform8_illegal_baseline` averages that probability over the actual generated source-node exposures. `illegal_rate_over_uniform8_baseline` divides the observed illegal-event rate by this baseline. Values below 1 beat uniform compass choice for those source exposures; values above 1 are worse. It is undefined when the baseline is zero.
+**Action opportunity baseline:** at a current inferred node of true degree `d`, choosing uniformly among the configured `k` compass actions would be illegal with probability `1 − d/k`. `uniform_direction_illegal_baseline` averages that probability over the actual generated source-node exposures. `illegal_rate_over_uniform_direction_baseline` divides the observed illegal-event rate by this baseline. Values below 1 beat uniform compass choice for those source exposures; values above 1 are worse. It is undefined when the baseline is zero. The legacy `uniform8_*` fields are populated only for eight-direction experiments.
 
 This is a descriptive, exposure-matched baseline, not a separate random-walk policy evaluation: the model and probe determine which source nodes receive exposure. `degree_exposure` reports observed illegality by degree, so a model that mostly visits corners or low-degree nodes can be distinguished from one visiting well-connected nodes.
 
-`uniform_inbounds_illegal_baseline` uses only geometrically in-bounds directions in its denominator. It isolates missing true edges from ordinary grid boundaries. Do not divide the observed eight-direction illegal rate by this alternative baseline and call it a controlled comparison: out-of-bounds actions contribute to the former but cannot occur under the latter.
+`uniform_inbounds_illegal_baseline` uses only geometrically in-bounds configured directions in its denominator. It isolates missing true edges from ordinary grid boundaries. Do not divide the observed illegal rate by this alternative baseline and call it a controlled comparison: out-of-bounds actions contribute to the former but cannot occur under the latter.
 
 Two density statistics are saved:
 
-- `graph_density_full_grid`: true edge count divided by the number of potential undirected eight-neighbor edges in the entire rectangle.
-- `graph_density_visited_nodes`: true edge count divided by potential eight-neighbor edges whose endpoints are both retained.
+- `graph_density_full_grid`: true edge count divided by the number of potential undirected edges allowed by the configured directions in the entire rectangle.
+- `graph_density_visited_nodes`: true edge count divided by potential configured-direction edges whose endpoints are both retained.
 
 For `r` rows and `c` columns, the full-grid edge count is `r(c−1) + (r−1)c + 2(r−1)(c−1)`. The second density distinguishes missing links among retained vertices from simply having unvisited regions.
 

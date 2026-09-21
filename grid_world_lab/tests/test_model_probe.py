@@ -88,6 +88,13 @@ class ModelTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "context_length"):
                 model(prefix[:, :1], past=first.cache, use_cache=True)
 
+    def test_cardinal_tokenizer_has_only_four_action_tokens(self):
+        tokenizer = Tokenizer(9, ["N", "E", "S", "W"])
+        self.assertEqual({"N", "E", "S", "W"}, set(tokenizer.direction_ids))
+        self.assertEqual(6, tokenizer.node_offset)
+        self.assertEqual(15, tokenizer.vocab_size)
+        self.assertNotIn("NE", tokenizer.direction_ids)
+
 
 class LossTests(unittest.TestCase):
     @classmethod

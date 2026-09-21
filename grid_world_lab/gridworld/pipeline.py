@@ -55,7 +55,9 @@ def prepare(config, output, resume=False):
     for warning in dataset.get('split_warnings', []):
         print(f'DATA WARNING: {warning}', flush=True)
     sampling = dataset.get('sampling', {})
-    mode_text = f"mode={sampling.get('mode', 'union')}, map_samples={sampling.get('map_samples', len(dataset['splits']['train']))}; "
+    mode_text = (f"mode={sampling.get('mode', 'union')}, "
+                 f"directions={len(dataset['graph'].get('directions', [])) or 8}, "
+                 f"map_samples={sampling.get('map_samples', len(dataset['splits']['train']))}; ")
     print(f"Data: {mode_text}{len(dataset['graph']['nodes'])} nodes, {len(dataset['graph']['edges'])} undirected edges; "
           + ', '.join(f'{key}={len(routes)}' for key, routes in dataset['splits'].items()), flush=True)
     coverage = dataset['graph'].get('training_coverage')
@@ -127,7 +129,8 @@ def run(config, output, resume=False):
     device, dtype = device_and_dtype(config['train'])
     torch.set_num_threads(config['train'].get('cpu_threads', 4))
     seed_everything(config['train']['seed'])
-    tokenizer = Tokenizer(config['data']['rows'] * config['data']['cols'])
+    tokenizer = Tokenizer(config['data']['rows'] * config['data']['cols'],
+                          dataset['graph'].get('directions'))
     needed_length = max(config['data']['max_length'] + 3,
                         (config['data'].get('heldout_max_length') or config['data']['max_length']) + 3,
                         config['generation']['max_new_tokens'] + 2)

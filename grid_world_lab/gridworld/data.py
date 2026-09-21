@@ -14,10 +14,19 @@ from typing import Any
 
 
 DIRECTIONS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+CARDINAL_DIRECTIONS = ("N", "E", "S", "W")
 DELTAS = {
     "N": (-1, 0), "NE": (-1, 1), "E": (0, 1), "SE": (1, 1),
     "S": (1, 0), "SW": (1, -1), "W": (0, -1), "NW": (-1, -1),
 }
+
+
+def directions_for_count(count: int) -> tuple[str, ...]:
+    if count == 4:
+        return CARDINAL_DIRECTIONS
+    if count == 8:
+        return DIRECTIONS
+    raise ValueError("num_directions must be 4 or 8")
 
 
 def edge_key(u: int, v: int) -> str:
@@ -44,10 +53,13 @@ def build_neighbor_table(graph: dict[str, Any]) -> dict[int, dict[str, int]]:
     rows, cols = int(graph["rows"]), int(graph["cols"])
     edges = {tuple(sorted((int(u), int(v)))) for u, v in graph["edges"]}
     result: dict[int, dict[str, int]] = {}
+    directions = tuple(graph.get("directions", DIRECTIONS))
+    if not directions or any(direction not in DELTAS for direction in directions):
+        raise ValueError("graph.directions contains an unknown or empty direction set")
     for raw_node in graph["nodes"]:
         node = int(raw_node)
         result[node] = {}
-        for direction in DIRECTIONS:
+        for direction in directions:
             other = bounded_neighbor(node, direction, rows, cols)
             if other is not None and tuple(sorted((node, other))) in edges:
                 result[node][direction] = other
@@ -56,6 +68,8 @@ def build_neighbor_table(graph: dict[str, Any]) -> dict[int, dict[str, int]]:
 
 def graph_neighbor(graph: dict[str, Any], node: int, direction: str) -> int | None:
     """Convenience one-off lookup; use build_neighbor_table in rollout loops."""
+    if direction not in graph.get("directions", DIRECTIONS):
+        return None
     candidate = bounded_neighbor(int(node), direction, int(graph["rows"]), int(graph["cols"]))
     if candidate is None:
         return None
@@ -143,6 +157,8 @@ def build_dataset(config: dict[str, Any]) -> dict[str, Any]:
     """
     rows = _positive_int(config, "rows", 10)
     cols = _positive_int(config, "cols", 10)
+    direction_count = _positive_int(config, "num_directions", 8)
+    directions = directions_for_count(direction_count)
     if rows * cols < 2:
         raise ValueError("A positive-length walk requires at least two grid nodes.")
     mode = config.get("mode", "union")
@@ -183,7 +199,7 @@ def build_dataset(config: dict[str, Any]) -> dict[str, Any]:
     }
     full_nodes = list(range(1, rows * cols + 1))
     full_neighbors = {
-        node: {direction: other for direction in DIRECTIONS
+        node: {direction: other for direction in directions
                if (other := bounded_neighbor(node, direction, rows, cols)) is not None}
         for node in full_nodes
     }
@@ -204,6 +220,7 @@ def build_dataset(config: dict[str, Any]) -> dict[str, Any]:
             map_directed_counts[f"{u}-{v}"] += 1
     graph: dict[str, Any] = {
         "rows": rows, "cols": cols,
+        "directions": list(directions), "num_directions": direction_count,
         "nodes": sorted(int(node) for node in map_node_counts),
         "edges": [list(edge) for edge in sorted(edges)],
         "map_node_counts": dict(sorted(map_node_counts.items(), key=lambda item: int(item[0]))),
