@@ -103,6 +103,17 @@ def main(argv=None):
         command.add_argument('--resume', action='store_true', help='Reuse completed stages only if the resolved config matches exactly.')
     report = commands.add_parser('report', help='Regenerate the offline viewer from an existing run.')
     report.add_argument('--run', required=True, type=Path)
+    extract = commands.add_parser('extract', help='Probe every action and its inverse on saved checkpoints; no retraining.')
+    extract.add_argument('--run', required=True, type=Path)
+    extract.add_argument('--output', required=True, type=Path)
+    extract.add_argument('--contexts-per-node', type=int, default=30)
+    extract.add_argument('--batch-size', type=int, default=64, help='Prefix batch size; each prefix branches into all directions.')
+    extract.add_argument('--seed', type=int, default=42)
+    extract.add_argument('--splits', nargs='+', choices=['seen', 'unseen', 'validation', 'probe_validation'], default=['seen', 'unseen'])
+    extract.add_argument('--include-generated', action='store_true', help='Also analyze saved generated prefixes, separated by physical validity.')
+    extract.add_argument('--sample-ids', nargs='+', help='Limit generated contexts to these saved sample IDs; implies --include-generated.')
+    extract.add_argument('--device', default='auto')
+    extract.add_argument('--precision', choices=['auto', 'fp32', 'bf16', 'fp16'], default='auto')
     sweep_parser = commands.add_parser('sweep', help='Run a Cartesian parameter/seed sweep sequentially.')
     sweep_parser.add_argument('--spec', required=True, type=Path)
     sweep_parser.add_argument('--output', required=True, type=Path)
@@ -117,6 +128,10 @@ def main(argv=None):
             (run if args.command == 'run' else prepare)(cfg, output, args.resume)
         elif args.command == 'report':
             print(create_report(args.run))
+        elif args.command == 'extract':
+            from .extract import extract_run
+            extract_run(args.run, args.output, args.contexts_per_node, args.batch_size,
+                        args.seed, args.splits, args.include_generated, args.device, args.precision, args.sample_ids)
         else:
             if args.limit is not None and args.limit < 1:
                 raise ValueError('--limit must be positive.')

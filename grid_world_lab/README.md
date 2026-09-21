@@ -127,7 +127,23 @@ The model receives only the two endpoint tokens at generation time. It does **no
 
 Some parameter choices leave no eligible unseen pairs or too few unique routes. The sampler has a finite `data.max_attempts` budget per split and reports requested versus actual counts plus explicit warnings. It does not relax cohort definitions, add new true edges, or duplicate held-out examples to fill the quota. Inspect these warnings before comparing runs. Increasing the attempt budget only helps if valid routes exist.
 
-## Model and probe
+## Extract action transitions from a trained checkpoint
+
+Run this from the project folder, using the directory containing your saved model and probe:
+
+```powershell
+python -m gridworld extract --run runs/frozen-sparse-4dir --output runs/extracted-map --contexts-per-node 30 --include-generated
+```
+
+This performs inference only. It loads the checkpoint architecture, tokenizer and probe layer from the saved run, including the configured four or eight directions. For each retained source with available contexts, it samples unique held-out prefixes ending at a known node, then independently forces each direction and its opposite. Directions are never masked by the true map and probed node IDs are never inserted into the history. Only prefixes with room for both added tokens are eligible; prefixes after a reference route ends are excluded.
+
+The offline `extraction.html` shows the true graph next to direction-labelled modal transitions, with filters for direction, source, agreement and sample count. It also exposes individual branches and a view restricted to correctly decoded pre-action locations. `extraction.json` preserves full post-action distributions; CSV files contain transitions, source-correct transitions, contexts and branches. Results distinguish modal agreement across histories, softmax confidence, LM action probability, inverse-action return, and reverse transitions from independent contexts at the decoded target. The last comparison tests a stronger claim than simply returning after an action and its opposite in one history.
+
+`--include-generated` adds saved generated prefixes, separating physically valid from already-invalid histories. At valid prefixes the source comes from independent graph tracking, even when the original reconstruction had relocated it. Invalid-prefix sources are inferred labels. Use `--sample-ids seen-12 unseen-34` to restrict generated contexts to particular saved samples, and find their route ID and step in the viewer. The per-source cap still applies separately to each context kind. Shared token-identical prefixes are deduplicated within each kind and retain the first route ID encountered.
+
+`--splits seen unseen` controls reference context sources; `validation` and `probe_validation` are also allowed. `--contexts-per-node`, `--seed`, `--batch-size`, `--device` and `--precision` are configurable. Batches group equal-length prefixes, reuse their KV caches, and expand each prefix into four or eight independent branches. Reduce batch size if needed. Missing source coverage is recorded rather than fabricated. Changing the context mixture or destination distribution can change the aggregate map; consult the individual contexts before interpreting a stable edge. Forced illegal actions have no ground-truth arrival label, and the probe always produces a node. High agreement or confidence alone does not demonstrate that an inferred edge is part of the model's internal map.
+
+## Model and probe details
 
 The transformer is trained from scratch with an independently implemented GPT-2-style architecture: pre-layer normalization, causal multi-head self-attention, GELU feed-forward blocks, learned absolute positional embeddings, and a tied token-embedding/output matrix. Model width must be divisible by the head count. `model.context_length=null` lets the pipeline choose a context budget for the configured training and generation lengths.
 

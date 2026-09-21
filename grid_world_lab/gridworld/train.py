@@ -187,7 +187,7 @@ def train_model(model, dataset, tokenizer, cfg, device, dtype, output):
     model.load_state_dict(torch.load(output / 'model.pt', map_location=device, weights_only=True)['state_dict'])
     elapsed = time.perf_counter() - start
     teacher_forced = {
-        split: evaluate_loss(model, dataset['splits'][split], tokenizer, cfg, device, dtype,
+        split: evaluate_loss(model, dataset['splits'].get(split, []), tokenizer, cfg, device, dtype,
                              dataset.get('graph'))
         for split in ('validation', 'seen', 'unseen')
     }
