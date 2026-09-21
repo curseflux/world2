@@ -23,9 +23,17 @@ def device_and_dtype(cfg):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if requested == 'auto' else torch.device(requested)
     if device.type == 'cuda' and not torch.cuda.is_available():
         raise RuntimeError('CUDA requested but unavailable. Install a CUDA PyTorch wheel or use train.device=cpu.')
+    if device.type == 'cuda' and device.index is None:
+        # Tensor operations accept bare "cuda", but some CUDA utility APIs
+        # (including mem_get_info in older PyTorch versions) require an index.
+        device = torch.device('cuda', torch.cuda.current_device())
     precision = cfg.get('precision', 'auto')
     if precision == 'auto':
-        precision = ('bf16' if torch.cuda.is_bf16_supported() else 'fp16') if device.type == 'cuda' else 'fp32'
+        if device.type == 'cuda':
+            with torch.cuda.device(device):
+                precision = 'bf16' if torch.cuda.is_bf16_supported() else 'fp16'
+        else:
+            precision = 'fp32'
     if precision not in {'bf16', 'fp16', 'fp32'}:
         raise ValueError('train.precision must be auto, bf16, fp16, or fp32')
     if precision == 'fp16' and device.type != 'cuda':
