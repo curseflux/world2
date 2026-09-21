@@ -141,6 +141,14 @@ The offline `extraction.html` shows the true graph beside a separate model-coord
 
 By default, geometry uses held-out reference prefixes whose pre-action probe correctly decodes the known source, with at least three contexts and 60% modal agreement. These thresholds can be changed with `--layout-kind`, `--layout-min-contexts`, and `--layout-min-agreement`; `--layout-all-preprobes` also accepts incorrectly decoded starting states. Viewer filters hide displayed constraints but do not silently refit the coordinates. The page also exposes individual branches. `extraction.json` preserves full post-action distributions; CSV files contain transitions, source-correct transitions, contexts, branches, fitted node coordinates, and fitted directional constraints. Results distinguish modal agreement across histories, softmax confidence, LM action probability, inverse-action return, and reverse transitions from independent contexts at the decoded target. The last comparison tests a stronger claim than simply returning after an action and its opposite in one history.
 
+The model map collapses reciprocal constraints into one thin edge and prints node IDs inside their markers. One-way direction marks and contradictory constraints are hidden initially and can be enabled separately, keeping dense 100-node maps readable while retaining the diagnostic views.
+
+After updating the viewer code, rebuild an existing extraction without running the model again:
+
+```powershell
+python -m gridworld extract-report --run runs/extracted-map
+```
+
 `--include-generated` adds saved generated prefixes, separating physically valid from already-invalid histories. At valid prefixes the source comes from independent graph tracking, even when the original reconstruction had relocated it. Invalid-prefix sources are inferred labels. Use `--sample-ids seen-12 unseen-34` to restrict generated contexts to particular saved samples, and find their route ID and step in the viewer. The per-source cap still applies separately to each context kind. Shared token-identical prefixes are deduplicated within each kind and retain the first route ID encountered.
 
 `--splits seen unseen` controls reference context sources; `validation` and `probe_validation` are also allowed. `--contexts-per-node`, `--seed`, `--batch-size`, `--device` and `--precision` are configurable. Batches group equal-length prefixes, reuse their KV caches, and expand each prefix into four or eight independent branches. Reduce batch size if needed. Missing source coverage is recorded rather than fabricated. Changing the context mixture or destination distribution can change the aggregate map; consult the individual contexts before interpreting a stable edge. Forced illegal actions have no ground-truth arrival label, and the probe always produces a node. High agreement or confidence alone does not demonstrate that an inferred edge is part of the model's internal map.

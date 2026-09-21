@@ -118,6 +118,8 @@ def main(argv=None):
     extract.add_argument('--layout-min-agreement', type=float, default=0.6)
     extract.add_argument('--layout-min-contexts', type=int, default=3)
     extract.add_argument('--layout-all-preprobes', action='store_true', help='Include contexts whose pre-action probe disagrees with a known source.')
+    extract_report = commands.add_parser('extract-report', help='Regenerate extraction.html from an existing extraction without rerunning inference.')
+    extract_report.add_argument('--run', required=True, type=Path)
     sweep_parser = commands.add_parser('sweep', help='Run a Cartesian parameter/seed sweep sequentially.')
     sweep_parser.add_argument('--spec', required=True, type=Path)
     sweep_parser.add_argument('--output', required=True, type=Path)
@@ -138,6 +140,9 @@ def main(argv=None):
                         args.seed, args.splits, args.include_generated, args.device, args.precision, args.sample_ids,
                         args.layout_kind, args.layout_min_agreement, args.layout_min_contexts,
                         args.layout_all_preprobes)
+        elif args.command == 'extract-report':
+            from .extract import create_extraction_report
+            create_extraction_report(args.run)
         else:
             if args.limit is not None and args.limit < 1:
                 raise ValueError('--limit must be positive.')

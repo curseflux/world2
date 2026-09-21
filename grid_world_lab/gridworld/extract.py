@@ -14,6 +14,17 @@ from .pipeline import export_csv, json_read, json_write
 OPPOSITE = dict(zip(DIRECTIONS, ('S', 'SW', 'W', 'NW', 'N', 'NE', 'E', 'SE')))
 
 
+def create_extraction_report(output):
+    """Rebuild only the extraction viewer from saved inference results."""
+    from .extract_report import render_extraction
+    output = Path(output).resolve()
+    payload = json_read(output / 'extraction.json')
+    report = output / 'extraction.html'
+    render_extraction(payload, report)
+    print(f'Extraction: {report}', flush=True)
+    return report
+
+
 def collect_contexts(dataset, samples, per_node, seed, context_length, splits):
     """Reservoir-sample unique prefixes separately per source and context kind."""
     if per_node < 1:

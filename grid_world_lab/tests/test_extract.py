@@ -99,6 +99,9 @@ class ExtractionTests(unittest.TestCase):
         embedded = re.search(r'type="application/json">(.*?)</script>', html, re.S).group(1)
         self.assertNotIn('<script>', embedded)
         self.assertEqual(json.loads(embedded), payload)
+        self.assertIn('id="directionMarks"', html)
+        self.assertIn('id="conflicts"', html)
+        self.assertIn('Reciprocal pairs are collapsed into one line', html)
 
 
 if __name__ == '__main__':
